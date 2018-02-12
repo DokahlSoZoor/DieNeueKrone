@@ -9,28 +9,31 @@ from tensorflow.contrib import rnn
 
 tf.logging.set_verbosity(tf.logging.INFO)
 
-# N_OUTPUTS = 1
-N_INPUTS = 10
+N_INPUTS = 28 # a-z, space and newline
+N_OUTPUTS = 28
+TIMESTEPS = 10
 
 def lstm_model(features, labels, mode, params):
-    LSTM_SIZE = N_INPUTS//3  # number of hidden layers in each of the LSTM cells
+    LSTM_SIZE = 4  # number of hidden layers in each of the LSTM cells
 
-    # 1. dynamic_rnn needs 3D shape: [BATCH_SIZE, N_INPUTS, 1]
-    x = tf.reshape(features, [-1, N_INPUTS, 1])
+    # 1. dynamic_rnn needs 3D shape: [BATCH_SIZE, TIMESTEPS, ...]
+    x = tf.reshape(features, [-1, TIMESTEPS, N_INPUTS])
 
     # 2. configure the RNN
     lstm_cell = rnn.BasicLSTMCell(LSTM_SIZE, forget_bias=1.0)
-    outputs, _ = tf.nn.dynamic_rnn(lstm_cell, x, dtype=tf.float32)
-    outputs = outputs[:, (N_INPUTS-1):, :]  # last cell only
+    outputs, state = tf.nn.dynamic_rnn(lstm_cell, x, dtype=tf.float32)
+    print(outputs)
+    print(lstm_cell.output_size)
+    outputs = outputs[:, (TIMESTEPS-1):, :]  # last cell only
 
     # 3. flatten lstm output and pass through a dense layer
     lstm_flat = tf.reshape(outputs, [-1, lstm_cell.output_size])
-    h1 = tf.layers.dense(lstm_flat, N_INPUTS//2, activation=tf.nn.tanh)
-    predictions = tf.layers.dense(h1, 1, activation=None) # (?, 1)
+    logits = tf.layers.dense(lstm_flat, N_OUTPUTS, activation=tf.nn.relu) # (?, N_OUTPUTS)
+    predictions = tf.nn.softmax(logits)
 
     # 2. loss function, training/eval ops
     if mode == tf.contrib.learn.ModeKeys.TRAIN or mode == tf.contrib.learn.ModeKeys.EVAL:
-        loss = tf.losses.mean_squared_error(labels, predictions)
+        loss = tf.nn.softmax_cross_entropy_with_logits_v2(logits=logits, labels=labels)
         train_op = tf.contrib.layers.optimize_loss(
             loss=loss,
             global_step=tf.train.get_global_step(),
@@ -57,25 +60,27 @@ def lstm_model(features, labels, mode, params):
         #   export_outputs={'predictions': tf.estimator.export.PredictOutput(predictions_dict)}
     )
 
-def line(steps, gradient):
-    if gradient > 0:
-        return [[(i/steps)*gradient] for i in range(steps)]
-    else:
-        return [[1+(i/steps)*gradient] for i in range(steps)]
-
 def read_dataset(filename=None):
     # generate data
-    all_data = [line(N_INPUTS+1, random.uniform(-1,1)) for _ in range(2000)]
+    with open(filename, 'r') as f:
+        text = f.read()
 
-    # split data into training and evaluation (80%, 20%)
-    train_data = all_data[:int(len(all_data)*0.8)]
-    eval_data  = all_data[int(len(all_data)*0.8):]
+    text = text.lower()
+    allowed = 'abcdefghijklmnopqrstuvwxyz \n'
+    text = [char for char in text if char in allowed]
+
+
+
+    # slicey slice (shape: (?, TIMESTEPS+1))
+    slices = [tf.slice(text, [b], [TIMESTEPS+1]) for b in range(0, len(text)-TIMESTEPS+1)]
+    slices = tf.stack(slices)
+
+    print('sliced')
 
     # transpose
-    train_data = list(map(list, zip(*train_data)))
-    eval_data = list(map(list, zip(*eval_data)))
+    train_data = tf.transpose(slices)
 
-    # make into tensors
+    # split into input and output
     train_x = tf.concat(train_data[:-1], axis=1)
     # train_y = tf.concat(train_data[-1], axis=0)
     train_y = train_data[-1]
@@ -83,10 +88,10 @@ def read_dataset(filename=None):
     # eval_y  = tf.concat(eval_data[-1], axis=0)
     eval_y = eval_data[-1]
 
-
     # and return
     return (train_x, train_y), (eval_x, eval_y)
 
+read_dataset('data/chapter_1.txt')
 
 model = tf.estimator.Estimator(
     model_fn=lstm_model,
@@ -101,8 +106,6 @@ model = tf.estimator.Estimator(
 
 def input_fn(features, labels, batch_size, repeat=-1):
     def _input_fn():
-        """An input function for training"""
-
         if labels is None:
             # No labels, use only features.
             inputs = features
@@ -124,12 +127,16 @@ def input_fn(features, labels, batch_size, repeat=-1):
 
 model.train(
     input_fn=input_fn(train_x, train_y, 20),
-    steps=2000
+    steps=20000
 )
 
 pred = model.predict(
-    input_fn=input_fn(eval_x, eval_y, 20, repeat=1),
+    input_fn=input_fn([line(11,0.5)[:-1]], [line(11,0.5)[-1]], 20, repeat=1),
 )
+
+print(line(11,0.5))
+for p in pred:
+    print(p)
 
 result = model.evaluate(
     input_fn=input_fn(eval_x, eval_y, 20, repeat=1),
