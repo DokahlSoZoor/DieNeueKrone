@@ -1,4 +1,3 @@
-
 import os
 import time
 import math
@@ -11,21 +10,8 @@ tf.set_random_seed(0)
 
 import util
 
-# model parameters
-#
-# Usage:
-#   Training only:
-#         Leave all the parameters as they are
-#         Disable validation to run a bit faster (set validation=False below)
-#         You can follow progress in Tensorboard: tensorboard --log-dir=log
-#   Training and experimentation (default):
-#         Keep validation enabled
-#         You can now play with the parameters anf follow the effects in Tensorboard
-#         A good choice of parameters ensures that the testing and validation curves stay close
-#         To see the curves drift apart ("overfitting") try to use an insufficient amount of
-#         training data (shakedir = "shakespeare/t*.txt" for example)
-#
-SEQLEN = 30
+# hyperparameters
+SEQLEN = 40
 BATCHSIZE = 200
 ALPHASIZE = util.ALPHASIZE
 INTERNALSIZE = 512
@@ -33,9 +19,9 @@ NLAYERS = 3
 learning_rate = 0.001  # fixed learning rate
 dropout_pkeep = 0.8    # some dropout
 
-shakedir = "data/*.txt"
-# shakedir = "data/11-0.txt"
-codetext, valitext = util.read_data_files(shakedir, validation=True)
+data_dir = "data/bbc/*/*.txt"
+# data_dir = "data/11-0.txt"
+codetext, valitext = util.read_data_files(data_dir, validation=True)
 
 # display some stats on the data
 epoch_size = len(codetext) // (BATCHSIZE * SEQLEN)
@@ -140,11 +126,10 @@ for x, y_, epoch in util.rnn_minibatch_sequencer(codetext, BATCHSIZE, SEQLEN, nb
 
     # run a validation step every 50 batches
     if step % _50_BATCHES == 0 and len(valitext) > 0:
-        VALI_SEQLEN = 30
         l_loss = []
         l_acc = []
         vali_state = np.zeros([BATCHSIZE, INTERNALSIZE*NLAYERS])
-        for vali_x, vali_y, _ in util.rnn_minibatch_sequencer(valitext, BATCHSIZE, VALI_SEQLEN, 1):
+        for vali_x, vali_y, _ in util.rnn_minibatch_sequencer(valitext, BATCHSIZE, SEQLEN, 1):
             feed_dict = {X: vali_x, Y_: vali_y, Hin: vali_state, pkeep: 1.0,  # no dropout for validation
                          batchsize: BATCHSIZE}
             ls, acc, ostate = sess.run([batchloss, accuracy, H], feed_dict=feed_dict)
@@ -164,15 +149,15 @@ for x, y_, epoch in util.rnn_minibatch_sequencer(codetext, BATCHSIZE, SEQLEN, nb
 
     # display a short text generated with the current weights and biases (every 150 batches)
     if step // 3 % _50_BATCHES == 0:
-        print('--- generated ---')
-        ry = np.array([[util.convert_from_alphabet(ord("K"))]])
+        print('--- generated sample ---')
+        ry = np.array([[util.encode_text('<t>')[0]]])
         rh = np.zeros([1, INTERNALSIZE * NLAYERS])
-        for k in range(1000):
+        for k in range(2000):
             ryo, rh = sess.run([Yo, H], feed_dict={X: ry, pkeep: 1.0, Hin: rh, batchsize: 1})
-            rc = util.sample_from_probabilities(ryo, topn=10 if epoch <= 1 else 2)
-            print(chr(util.convert_to_alphabet(rc)), end="")
+            rc = util.sample_from_probabilities(ryo, topn=3 if epoch <= 1 else 2)
+            print(util.decode_character(rc), end="")
             ry = np.array([[rc]])
-        print('\n--- end of generated ---'.format(step))
+        print('\n--- end of generated sample ---'.format(step))
 
     # save a checkpoint (every 500 batches)
     if step // 10 % _50_BATCHES == 0:

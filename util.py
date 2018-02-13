@@ -3,7 +3,9 @@ import glob
 import sys
 
 # size of the alphabet that we work with
-ALPHASIZE = 98
+tags = ['<t>', '</t>']
+ALPHASIZE = 98 + len(tags)
+
 
 # Specification of the supported alphabet (subset of ASCII-7)
 # 10 line feed LF
@@ -12,17 +14,20 @@ ALPHASIZE = 98
 # 91-97 more punctuation
 # 97-122 lower-case letters
 # 123-126 more punctuation
-def convert_from_alphabet(a):
+def encode_character(a):
     """Encode a character
     :param a: one character
     :return: the encoded value
     """
+    a = ord(a)
     if a == 9:
         return 1
     if a == 10:
         return 127 - 30  # LF
     elif 32 <= a <= 126:
         return a - 30
+    elif 128 <= a < 128+len(tags):
+        return a-30
     else:
         return 0  # unknown
 
@@ -33,20 +38,22 @@ def convert_from_alphabet(a):
 # space = 2
 # all chars from 32 to 126 = c-30
 # LF mapped to 127-30
-def convert_to_alphabet(c, avoid_tab_and_lf=False):
+# 98+ can be used for tags
+def decode_character(c):
     """Decode a code point
     :param c: code point
-    :param avoid_tab_and_lf: if True, tab and line feed characters are replaced by '\'
     :return: decoded character
     """
     if c == 1:
-        return 32 if avoid_tab_and_lf else 9  # space instead of TAB
+        return chr(9)
     if c == 127 - 30:
-        return 92 if avoid_tab_and_lf else 10  # \ instead of LF
+        return chr(10)
     if 32 <= c + 30 <= 126:
-        return c + 30
+        return chr(c + 30)
+    if c <= 98 + len(tags):
+        return tags[c-98]
     else:
-        return 0  # unknown
+        return chr(0)  # unknown
 
 
 def encode_text(s):
@@ -54,16 +61,19 @@ def encode_text(s):
     :param s: a text string
     :return: encoded list of code points
     """
-    return list(map(lambda a: convert_from_alphabet(ord(a)), s))
+    for i in range(len(tags)):
+        tag = tags[i]
+        s = s.replace(tag, chr(i+128))
+    return list(map(lambda a: encode_character(a), s))
 
 
-def decode_to_text(c, avoid_tab_and_lf=False):
-    """Decode an encoded string.
-    :param c: encoded list of code points
-    :param avoid_tab_and_lf: if True, tab and line feed characters are replaced by '\'
-    :return:
-    """
-    return "".join(map(lambda a: chr(convert_to_alphabet(a, avoid_tab_and_lf)), c))
+# def decode_to_text(c, avoid_tab_and_lf=False):
+#     """Decode an encoded string.
+#     :param c: encoded list of code points
+#     :param avoid_tab_and_lf: if True, tab and line feed characters are replaced by '\'
+#     :return:
+#     """
+#     return "".join(map(lambda a: chr(decode_character(a, avoid_tab_and_lf)), c))
 
 
 def sample_from_probabilities(probabilities, topn=ALPHASIZE):
@@ -114,6 +124,11 @@ def rnn_minibatch_sequencer(raw_data, batch_size, sequence_size, nb_epochs):
             yield x, y, epoch
 
 
+def process_text(text):
+    title_end = text.index('\n')
+    return '<t>' + text[:title_end] + '<t/>' + text[title_end:]
+    # return text.replace('\n', ' ')
+
 def read_data_files(directory, validation=True):
     """Read data files according to the specified glob pattern
     Optionnaly set aside the last file as validation data.
@@ -127,15 +142,16 @@ def read_data_files(directory, validation=True):
     bookranges = []
     shakelist = glob.glob(directory, recursive=True)
     for shakefile in shakelist:
-        shaketext = open(shakefile, "r")
+        shaketext = open(shakefile, 'r')
         print("Loading file " + shakefile)
         start = len(codetext)
-        codetext.extend(encode_text(shaketext.read()))
+        # text = shaketext.read()
+        text = process_text(shaketext.read())
+        codetext.extend(encode_text(text))
         end = len(codetext)
-        bookranges.append({"start": start, "end": end, "name": shakefile.rsplit("/", 1)[-1]})
         shaketext.close()
 
-    if len(bookranges) == 0:
+    if len(codetext) == 0:
         sys.exit("No training data has been found. Aborting.")
 
     # For validation, use roughly 90K of text
