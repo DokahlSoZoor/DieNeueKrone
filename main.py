@@ -1,139 +1,186 @@
-import collections
-import random
 
+import os
+import time
+import math
+
+import numpy as np
 import tensorflow as tf
-import tensorflow.contrib.learn as learn
-from tensorflow.contrib.learn.python.learn import learn_runner
-# import tensorflow.contrib.metrics as metrics
+from tensorflow.contrib import layers
 from tensorflow.contrib import rnn
+tf.set_random_seed(0)
 
-tf.logging.set_verbosity(tf.logging.INFO)
+import util
 
-# N_OUTPUTS = 1
-N_INPUTS = 10
+# model parameters
+#
+# Usage:
+#   Training only:
+#         Leave all the parameters as they are
+#         Disable validation to run a bit faster (set validation=False below)
+#         You can follow progress in Tensorboard: tensorboard --log-dir=log
+#   Training and experimentation (default):
+#         Keep validation enabled
+#         You can now play with the parameters anf follow the effects in Tensorboard
+#         A good choice of parameters ensures that the testing and validation curves stay close
+#         To see the curves drift apart ("overfitting") try to use an insufficient amount of
+#         training data (shakedir = "shakespeare/t*.txt" for example)
+#
+SEQLEN = 30
+BATCHSIZE = 200
+ALPHASIZE = util.ALPHASIZE
+INTERNALSIZE = 512
+NLAYERS = 3
+learning_rate = 0.001  # fixed learning rate
+dropout_pkeep = 0.8    # some dropout
 
-def lstm_model(features, labels, mode, params):
-    LSTM_SIZE = N_INPUTS//3  # number of hidden layers in each of the LSTM cells
+# shakedir = "data/*.txt"
+shakedir = "data/11-0.txt"
+codetext, valitext = util.read_data_files(shakedir, validation=True)
 
-    # 1. dynamic_rnn needs 3D shape: [BATCH_SIZE, N_INPUTS, 1]
-    x = tf.reshape(features, [-1, N_INPUTS, 1])
+# display some stats on the data
+epoch_size = len(codetext) // (BATCHSIZE * SEQLEN)
+print('data stats: training_len={}, validation_len={}, epoch_size={}'.format(len(codetext), len(valitext), epoch_size))
 
-    # 2. configure the RNN
-    lstm_cell = rnn.BasicLSTMCell(LSTM_SIZE, forget_bias=1.0)
-    outputs, _ = tf.nn.dynamic_rnn(lstm_cell, x, dtype=tf.float32)
-    outputs = outputs[:, (N_INPUTS-1):, :]  # last cell only
+#
+# the model (see FAQ in README.md)
+#
+lr = tf.placeholder(tf.float32, name='lr')  # learning rate
+pkeep = tf.placeholder(tf.float32, name='pkeep')  # dropout parameter
+batchsize = tf.placeholder(tf.int32, name='batchsize')
 
-    # 3. flatten lstm output and pass through a dense layer
-    lstm_flat = tf.reshape(outputs, [-1, lstm_cell.output_size])
-    h1 = tf.layers.dense(lstm_flat, N_INPUTS//2, activation=tf.nn.tanh)
-    predictions = tf.layers.dense(h1, 1, activation=None) # (?, 1)
+# inputs
+X = tf.placeholder(tf.uint8, [None, None], name='X')    # [ BATCHSIZE, SEQLEN ]
+Xo = tf.one_hot(X, ALPHASIZE, 1.0, 0.0)                 # [ BATCHSIZE, SEQLEN, ALPHASIZE ]
+# expected outputs = same sequence shifted by 1 since we are trying to predict the next character
+Y_ = tf.placeholder(tf.uint8, [None, None], name='Y_')  # [ BATCHSIZE, SEQLEN ]
+Yo_ = tf.one_hot(Y_, ALPHASIZE, 1.0, 0.0)               # [ BATCHSIZE, SEQLEN, ALPHASIZE ]
+# input state
+Hin = tf.placeholder(tf.float32, [None, INTERNALSIZE*NLAYERS], name='Hin')  # [ BATCHSIZE, INTERNALSIZE * NLAYERS]
 
-    # 2. loss function, training/eval ops
-    if mode == tf.contrib.learn.ModeKeys.TRAIN or mode == tf.contrib.learn.ModeKeys.EVAL:
-        loss = tf.losses.mean_squared_error(labels, predictions)
-        train_op = tf.contrib.layers.optimize_loss(
-            loss=loss,
-            global_step=tf.train.get_global_step(),
-            learning_rate=0.01,
-            optimizer="SGD"
-        )
-        eval_metric_ops = {
-            "rmse": tf.metrics.root_mean_squared_error(labels, predictions)
-        }
-    else:
-        loss = None
-        train_op = None
-        eval_metric_ops = None
+# using a NLAYERS=3 layers of GRU cells, unrolled SEQLEN=30 times
+# dynamic_rnn infers SEQLEN from the size of the inputs Xo
 
-    # 3. Create predictions
-    predictions_dict = {"predicted": predictions}
+# How to properly apply dropout in RNNs: see README.md
+cells = [rnn.GRUCell(INTERNALSIZE) for _ in range(NLAYERS)]
+# "naive dropout" implementation
+dropcells = [rnn.DropoutWrapper(cell,input_keep_prob=pkeep) for cell in cells]
+multicell = rnn.MultiRNNCell(dropcells, state_is_tuple=False)
+multicell = rnn.DropoutWrapper(multicell, output_keep_prob=pkeep)  # dropout for the softmax layer
 
-    return tf.estimator.EstimatorSpec(
-        mode=mode,
-        predictions=predictions_dict,
-        loss=loss,
-        train_op=train_op,
-        eval_metric_ops=eval_metric_ops,
-        #   export_outputs={'predictions': tf.estimator.export.PredictOutput(predictions_dict)}
-    )
+Yr, H = tf.nn.dynamic_rnn(multicell, Xo, dtype=tf.float32, initial_state=Hin)
+# Yr: [ BATCHSIZE, SEQLEN, INTERNALSIZE ]
+# H:  [ BATCHSIZE, INTERNALSIZE*NLAYERS ] # this is the last state in the sequence
 
-def line(steps, gradient):
-    if gradient > 0:
-        return [[(i/steps)*gradient] for i in range(steps)]
-    else:
-        return [[1+(i/steps)*gradient] for i in range(steps)]
+H = tf.identity(H, name='H')  # just to give it a name
 
-def read_dataset(filename=None):
-    # generate data
-    all_data = [line(N_INPUTS+1, random.uniform(-1,1)) for _ in range(2000)]
+# Softmax layer implementation:
+# Flatten the first two dimension of the output [ BATCHSIZE, SEQLEN, ALPHASIZE ] => [ BATCHSIZE x SEQLEN, ALPHASIZE ]
+# then apply softmax readout layer. This way, the weights and biases are shared across unrolled time steps.
+# From the readout point of view, a value coming from a sequence time step or a minibatch item is the same thing.
 
-    # split data into training and evaluation (80%, 20%)
-    train_data = all_data[:int(len(all_data)*0.8)]
-    eval_data  = all_data[int(len(all_data)*0.8):]
+Yflat = tf.reshape(Yr, [-1, INTERNALSIZE])    # [ BATCHSIZE x SEQLEN, INTERNALSIZE ]
+Ylogits = layers.linear(Yflat, ALPHASIZE)     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
+Yflat_ = tf.reshape(Yo_, [-1, ALPHASIZE])     # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
+loss = tf.nn.softmax_cross_entropy_with_logits(logits=Ylogits, labels=Yflat_)  # [ BATCHSIZE x SEQLEN ]
+loss = tf.reshape(loss, [batchsize, -1])      # [ BATCHSIZE, SEQLEN ]
+Yo = tf.nn.softmax(Ylogits, name='Yo')        # [ BATCHSIZE x SEQLEN, ALPHASIZE ]
+Y = tf.argmax(Yo, 1)                          # [ BATCHSIZE x SEQLEN ]
+Y = tf.reshape(Y, [batchsize, -1], name="Y")  # [ BATCHSIZE, SEQLEN ]
+train_step = tf.train.AdamOptimizer(lr).minimize(loss)
 
-    # transpose
-    train_data = list(map(list, zip(*train_data)))
-    eval_data = list(map(list, zip(*eval_data)))
+# stats for display
+seqloss = tf.reduce_mean(loss, 1)
+batchloss = tf.reduce_mean(seqloss)
+accuracy = tf.reduce_mean(tf.cast(tf.equal(Y_, tf.cast(Y, tf.uint8)), tf.float32))
+loss_summary = tf.summary.scalar("batch_loss", batchloss)
+acc_summary = tf.summary.scalar("batch_accuracy", accuracy)
+summaries = tf.summary.merge([loss_summary, acc_summary])
 
-    # make into tensors
-    train_x = tf.concat(train_data[:-1], axis=1)
-    # train_y = tf.concat(train_data[-1], axis=0)
-    train_y = train_data[-1]
-    eval_x  = tf.concat(eval_data[:-1], axis=1)
-    # eval_y  = tf.concat(eval_data[-1], axis=0)
-    eval_y = eval_data[-1]
+# Init Tensorboard stuff. This will save Tensorboard information into a different
+# folder at each run named 'log/<timestamp>/'. Two sets of data are saved so that
+# you can compare training and validation curves visually in Tensorboard.
+timestamp = str(math.trunc(time.time()))
+summary_writer = tf.summary.FileWriter("log/" + timestamp + "-training")
+validation_writer = tf.summary.FileWriter("log/" + timestamp + "-validation")
 
+# Init for saving models. They will be saved into a directory named 'checkpoints'.
+# Only the last checkpoint is kept.
+if not os.path.exists("checkpoints"):
+    os.mkdir("checkpoints")
+saver = tf.train.Saver(max_to_keep=1000)
 
-    # and return
-    return (train_x, train_y), (eval_x, eval_y)
+# for display: init the progress bar
+DISPLAY_FREQ = 50
+_50_BATCHES = DISPLAY_FREQ * BATCHSIZE * SEQLEN
+# progress = txt.Progress(DISPLAY_FREQ, size=111+2, msg="Training on next "+str(DISPLAY_FREQ)+" batches")
 
+# init
+istate = np.zeros([BATCHSIZE, INTERNALSIZE*NLAYERS])  # initial zero input state
+init = tf.global_variables_initializer()
+sess = tf.Session()
+sess.run(init)
+step = 0
 
-model = tf.estimator.Estimator(
-    model_fn=lstm_model,
-    # params={
-    #     'feature_columns': my_feature_columns,
-    #     # Two hidden layers of 10 nodes each.
-    #     'hidden_units': [10, 10],
-    #     # The model must choose between 3 classes.
-    #     'n_classes': 3,
-    # }
-)
+# training loop
+print('=== TRAINING ===')
+for x, y_, epoch in util.rnn_minibatch_sequencer(codetext, BATCHSIZE, SEQLEN, nb_epochs=100):
 
-def input_fn(features, labels, batch_size, repeat=-1):
-    def _input_fn():
-        """An input function for training"""
+    # train on one minibatch
+    feed_dict = {X: x, Y_: y_, Hin: istate, lr: learning_rate, pkeep: dropout_pkeep, batchsize: BATCHSIZE}
+    _, y, ostate = sess.run([train_step, Y, H], feed_dict=feed_dict)
 
-        if labels is None:
-            # No labels, use only features.
-            inputs = features
-        else:
-            inputs = (features, labels)
+    # log training data for Tensorboard display a mini-batch of sequences (every 50 batches)
+    if step % _50_BATCHES == 0:
+        feed_dict = {X: x, Y_: y_, Hin: istate, pkeep: 1.0, batchsize: BATCHSIZE}  # no dropout for validation
+        y, l, bl, acc, smm = sess.run([Y, seqloss, batchloss, accuracy, summaries], feed_dict=feed_dict)
+        # txt.print_learning_learned_comparison(x, y, l, bookranges, bl, acc, epoch_size, step, epoch)
+        print('\n\nstep {} (epoch {}):'.format(step, epoch))
+        print('  training:   loss={:.5f}, accuracy={:.5f}'.format(bl, acc))
+        summary_writer.add_summary(smm, step)
 
-        # Convert the inputs to a Dataset.
-        dataset = tf.data.Dataset.from_tensor_slices(inputs)
+    # run a validation step every 50 batches
+    if step % _50_BATCHES == 0 and len(valitext) > 0:
+        VALI_SEQLEN = 30
+        l_loss = []
+        l_acc = []
+        vali_state = np.zeros([BATCHSIZE, INTERNALSIZE*NLAYERS])
+        for vali_x, vali_y, _ in util.rnn_minibatch_sequencer(valitext, BATCHSIZE, VALI_SEQLEN, 1):
+            feed_dict = {X: vali_x, Y_: vali_y, Hin: vali_state, pkeep: 1.0,  # no dropout for validation
+                         batchsize: BATCHSIZE}
+            ls, acc, ostate = sess.run([batchloss, accuracy, H], feed_dict=feed_dict)
+            l_loss.append(ls)
+            l_acc.append(acc)
+            vali_state = ostate
+        # calculate average
+        avg_summary = tf.Summary(value=[
+            tf.Summary.Value(tag="batch_loss", simple_value=np.mean(l_loss)),
+            tf.Summary.Value(tag="batch_accuracy", simple_value=np.mean(l_acc)),
+        ])
 
-        # Shuffle, repeat, and batch the examples.
-        dataset = dataset.shuffle(1000).repeat(repeat).batch(batch_size)
+        print('  validation: loss={:.5f}, accuracy={:.5f}'.format(ls, acc))
+        # txt.print_validation_stats(ls, acc)
+        # save validation data for Tensorboard
+        validation_writer.add_summary(avg_summary, step)
 
-        # Build the Iterator, and return the read end of the pipeline.
-        return dataset.make_one_shot_iterator().get_next()
-    return _input_fn
+    # display a short text generated with the current weights and biases (every 150 batches)
+    if step // 3 % _50_BATCHES == 0:
+        print('--- generated ---')
+        ry = np.array([[util.convert_from_alphabet(ord("K"))]])
+        rh = np.zeros([1, INTERNALSIZE * NLAYERS])
+        for k in range(1000):
+            ryo, rh = sess.run([Yo, H], feed_dict={X: ry, pkeep: 1.0, Hin: rh, batchsize: 1})
+            rc = util.sample_from_probabilities(ryo, topn=10 if epoch <= 1 else 2)
+            print(chr(util.convert_to_alphabet(rc)), end="")
+            ry = np.array([[rc]])
+        print('\n--- end of generated ---'.format(step))
 
+    # save a checkpoint (every 500 batches)
+    if step // 10 % _50_BATCHES == 0:
+        saved_file = saver.save(sess, 'checkpoints/rnn_train_' + timestamp, global_step=step)
+        print("Saved file: " + saved_file)
 
-(train_x, train_y), (eval_x, eval_y) = read_dataset()
+    print('.', end='', flush=True)
 
-model.train(
-    input_fn=input_fn(train_x, train_y, 20),
-    steps=2000
-)
-
-pred = model.predict(
-    input_fn=input_fn(eval_x, eval_y, 20, repeat=1),
-)
-
-result = model.evaluate(
-    input_fn=input_fn(eval_x, eval_y, 20, repeat=1),
-)
-
-for metric, values in result.items():
-    print(metric + ':', result)
+    # loop state around
+    istate = ostate
+    step += BATCHSIZE * SEQLEN
