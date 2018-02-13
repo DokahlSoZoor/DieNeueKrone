@@ -33,8 +33,8 @@ NLAYERS = 3
 learning_rate = 0.001  # fixed learning rate
 dropout_pkeep = 0.8    # some dropout
 
-# shakedir = "data/*.txt"
-shakedir = "data/11-0.txt"
+shakedir = "data/*.txt"
+# shakedir = "data/11-0.txt"
 codetext, valitext = util.read_data_files(shakedir, validation=True)
 
 # display some stats on the data
@@ -123,7 +123,7 @@ step = 0
 
 # training loop
 print('=== TRAINING ===')
-for x, y_, epoch in util.rnn_minibatch_sequencer(codetext, BATCHSIZE, SEQLEN, nb_epochs=100):
+for x, y_, epoch in util.rnn_minibatch_sequencer(codetext, BATCHSIZE, SEQLEN, nb_epochs=10):
 
     # train on one minibatch
     feed_dict = {X: x, Y_: y_, Hin: istate, lr: learning_rate, pkeep: dropout_pkeep, batchsize: BATCHSIZE}
