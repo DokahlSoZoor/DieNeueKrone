@@ -1,0 +1,17 @@
+bleach==1.5.0
+click==6.7
+enum34==1.1.6
+Flask==0.12.2
+gunicorn==19.7.1
+html5lib==0.9999999
+itsdangerous==0.24
+Jinja2==2.10
+Markdown==2.6.11
+MarkupSafe==1.0
+numpy==1.14.0
+protobuf==3.5.1
+six==1.11.0
+tensorflow==1.4.0
+tensorflow-gpu==1.4.0
+tensorflow-tensorboard==0.4.0
+Werkzeug==0.14.1
