@@ -3808,7 +3808,7 @@ made as soon as possible, we shall be obliged by your having teams ready
 at King's Cross at the time named and forthwith conveying the goods to
 destination. In order to obviate any delays possible through any routine
 requirements as to payment in your departments, we enclose cheque
-herewith for ten pounds (£10), receipt of which please acknowledge.
+herewith for ten pounds (pounds 10), receipt of which please acknowledge.
 Should the charge be less than this amount, you can return balance; if
 greater, we shall at once send cheque for difference on hearing from
 you. You are to leave the keys on coming away in the main hall of the
@@ -3832,7 +3832,7 @@ Son, Whitby._
 
 "Dear Sirs,--
 
-"We beg to acknowledge £10 received and to return cheque £1 17s. 9d,
+"We beg to acknowledge pounds 10 received and to return cheque pounds 1 17s. 9d,
 amount of overplus, as shown in receipted account herewith. Goods are
 delivered in exact accordance with instructions, and keys left in parcel
 in main hall, as directed.

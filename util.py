@@ -29,6 +29,7 @@ def encode_character(a):
     elif 128 <= a < 128+len(tags):
         return a-30
     else:
+        print('unknown char: {}'.format(a))
         return 0  # unknown
 
 
@@ -50,7 +51,7 @@ def decode_character(c):
         return chr(10)
     if 32 <= c + 30 <= 126:
         return chr(c + 30)
-    if c <= 98 + len(tags):
+    if 98 <= c < 98+len(tags):
         return tags[c-98]
     else:
         return chr(0)  # unknown
@@ -126,7 +127,7 @@ def rnn_minibatch_sequencer(raw_data, batch_size, sequence_size, nb_epochs):
 
 def process_text(text):
     title_end = text.index('\n')
-    return '<t>' + text[:title_end] + '<t/>' + text[title_end:]
+    return '<t>' + text[:title_end] + '</t>' + text[title_end:]
     # return text.replace('\n', ' ')
 
 def read_data_files(directory, validation=True):
