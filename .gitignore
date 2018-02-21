@@ -101,6 +101,6 @@ ENV/
 .mypy_cache/
 
 
-# tensorflow 
+# tensorflow
 log/
-checkpoints/
+# checkpoints/

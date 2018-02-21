@@ -31,7 +31,7 @@ def hello():
 @app.route('/sample')
 def sample():
     """Return a friendly HTTP greeting."""
-    return model.generate_sample('checkpoints/rnn_train_1518551334-36000000')
+    return model.generate_sample('checkpoints/rnn_train_1518551334-40000000')
 
 @app.errorhandler(500)
 def server_error(e):

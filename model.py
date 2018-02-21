@@ -198,4 +198,4 @@ def generate_sample(checkpoint, length=5000):
 if __name__ == '__main__':
     # codetext, valitext = load_data()
     # train(codetext, valitext)
-    print(generate_sample('checkpoints/rnn_train_1518551334-36000000'))
+    print(generate_sample('checkpoints/rnn_train_1518551334-40000000'))
