@@ -21,11 +21,15 @@ dropout_pkeep = 0.8    # some dropout
 
 data_dir = "data/bbc/*/*.txt"
 # data_dir = "data/11-0.txt"
-codetext, valitext = util.read_data_files(data_dir, validation=True)
 
-# display some stats on the data
-epoch_size = len(codetext) // (BATCHSIZE * SEQLEN)
-print('data stats: training_len={}, validation_len={}, epoch_size={}'.format(len(codetext), len(valitext), epoch_size))
+def load_data(dir=data_dir):
+    codetext, valitext = util.read_data_files(data_dir, validation=True)
+
+    # display some stats on the data
+    epoch_size = len(codetext) // (BATCHSIZE * SEQLEN)
+    print('data stats: training_len={}, validation_len={}, epoch_size={}'.format(len(codetext), len(valitext), epoch_size))
+
+    return codetext, valitext
 
 #
 # the model (see FAQ in README.md)
@@ -95,77 +99,103 @@ if not os.path.exists("checkpoints"):
     os.mkdir("checkpoints")
 saver = tf.train.Saver(max_to_keep=1000)
 
-# for display: init the progress bar
-DISPLAY_FREQ = 50
-_50_BATCHES = DISPLAY_FREQ * BATCHSIZE * SEQLEN
-# progress = txt.Progress(DISPLAY_FREQ, size=111+2, msg="Training on next "+str(DISPLAY_FREQ)+" batches")
 
-# init
-istate = np.zeros([BATCHSIZE, INTERNALSIZE*NLAYERS])  # initial zero input state
-init = tf.global_variables_initializer()
-sess = tf.Session()
-sess.run(init)
-step = 0
+def train(codetext, valitext):
+    DISPLAY_FREQ = 50
+    _50_BATCHES = DISPLAY_FREQ * BATCHSIZE * SEQLEN
 
-# training loop
-print('=== TRAINING ===')
-for x, y_, epoch in util.rnn_minibatch_sequencer(codetext, BATCHSIZE, SEQLEN, nb_epochs=10):
+    # init
+    istate = np.zeros([BATCHSIZE, INTERNALSIZE*NLAYERS])  # initial zero input state
+    init = tf.global_variables_initializer()
+    sess = tf.Session()
+    sess.run(init)
+    step = 0
 
-    # train on one minibatch
-    feed_dict = {X: x, Y_: y_, Hin: istate, lr: learning_rate, pkeep: dropout_pkeep, batchsize: BATCHSIZE}
-    _, y, ostate = sess.run([train_step, Y, H], feed_dict=feed_dict)
+    # training loop
+    print('=== TRAINING ===')
+    for x, y_, epoch in util.rnn_minibatch_sequencer(codetext, BATCHSIZE, SEQLEN, nb_epochs=10):
 
-    # log training data for Tensorboard display a mini-batch of sequences (every 50 batches)
-    if step % _50_BATCHES == 0:
-        feed_dict = {X: x, Y_: y_, Hin: istate, pkeep: 1.0, batchsize: BATCHSIZE}  # no dropout for validation
-        y, l, bl, acc, smm = sess.run([Y, seqloss, batchloss, accuracy, summaries], feed_dict=feed_dict)
-        # txt.print_learning_learned_comparison(x, y, l, bookranges, bl, acc, epoch_size, step, epoch)
-        print('\n\nstep {} (epoch {}):'.format(step, epoch))
-        print('  training:   loss={:.5f}, accuracy={:.5f}'.format(bl, acc))
-        summary_writer.add_summary(smm, step)
+        # train on one minibatch
+        feed_dict = {X: x, Y_: y_, Hin: istate, lr: learning_rate, pkeep: dropout_pkeep, batchsize: BATCHSIZE}
+        _, y, ostate = sess.run([train_step, Y, H], feed_dict=feed_dict)
 
-    # run a validation step every 50 batches
-    if step % _50_BATCHES == 0 and len(valitext) > 0:
-        l_loss = []
-        l_acc = []
-        vali_state = np.zeros([BATCHSIZE, INTERNALSIZE*NLAYERS])
-        for vali_x, vali_y, _ in util.rnn_minibatch_sequencer(valitext, BATCHSIZE, SEQLEN, 1):
-            feed_dict = {X: vali_x, Y_: vali_y, Hin: vali_state, pkeep: 1.0,  # no dropout for validation
-                         batchsize: BATCHSIZE}
-            ls, acc, ostate = sess.run([batchloss, accuracy, H], feed_dict=feed_dict)
-            l_loss.append(ls)
-            l_acc.append(acc)
-            vali_state = ostate
-        # calculate average
-        avg_summary = tf.Summary(value=[
-            tf.Summary.Value(tag="batch_loss", simple_value=np.mean(l_loss)),
-            tf.Summary.Value(tag="batch_accuracy", simple_value=np.mean(l_acc)),
-        ])
+        # log training data for Tensorboard display a mini-batch of sequences (every 50 batches)
+        if step % _50_BATCHES == 0:
+            feed_dict = {X: x, Y_: y_, Hin: istate, pkeep: 1.0, batchsize: BATCHSIZE}  # no dropout for validation
+            y, l, bl, acc, smm = sess.run([Y, seqloss, batchloss, accuracy, summaries], feed_dict=feed_dict)
+            print('\n\nstep {} (epoch {}):'.format(step, epoch))
+            print('  training:   loss={:.5f}, accuracy={:.5f}'.format(bl, acc))
+            summary_writer.add_summary(smm, step)
 
-        print('  validation: loss={:.5f}, accuracy={:.5f}'.format(ls, acc))
-        # txt.print_validation_stats(ls, acc)
-        # save validation data for Tensorboard
-        validation_writer.add_summary(avg_summary, step)
+        # run a validation step every 50 batches
+        if step % _50_BATCHES == 0 and len(valitext) > 0:
+            l_loss = []
+            l_acc = []
+            vali_state = np.zeros([BATCHSIZE, INTERNALSIZE*NLAYERS])
+            for vali_x, vali_y, _ in util.rnn_minibatch_sequencer(valitext, BATCHSIZE, SEQLEN, 1):
+                feed_dict = {X: vali_x, Y_: vali_y, Hin: vali_state, pkeep: 1.0,  # no dropout for validation
+                             batchsize: BATCHSIZE}
+                ls, acc, ostate = sess.run([batchloss, accuracy, H], feed_dict=feed_dict)
+                l_loss.append(ls)
+                l_acc.append(acc)
+                vali_state = ostate
+            # calculate average
+            avg_summary = tf.Summary(value=[
+                tf.Summary.Value(tag="batch_loss", simple_value=np.mean(l_loss)),
+                tf.Summary.Value(tag="batch_accuracy", simple_value=np.mean(l_acc)),
+            ])
 
-    # display a short text generated with the current weights and biases (every 150 batches)
-    if step // 3 % _50_BATCHES == 0:
-        print('--- generated sample ---')
-        ry = np.array([[util.encode_text('<t>')[]]])
-        rh = np.zeros([1, INTERNALSIZE * NLAYERS])
-        for k in range(2000):
-            ryo, rh = sess.run([Yo, H], feed_dict={X: ry, pkeep: 1.0, Hin: rh, batchsize: 1})
-            rc = util.sample_from_probabilities(ryo, topn=3 if epoch <= 1 else 2)
-            print(util.decode_character(rc), end="")
-            ry = np.array([[rc]])
-        print('\n--- end of generated sample ---'.format(step))
+            print('  validation: loss={:.5f}, accuracy={:.5f}'.format(ls, acc))
+            # save validation data for Tensorboard
+            validation_writer.add_summary(avg_summary, step)
 
-    # save a checkpoint (every 500 batches)
-    if step // 10 % _50_BATCHES == 0:
-        saved_file = saver.save(sess, 'checkpoints/rnn_train_' + timestamp, global_step=step)
-        print("Saved file: " + saved_file)
+        # display a short text generated with the current weights and biases (every 150 batches)
+        if step // 3 % _50_BATCHES == 0:
+            print('--- generated sample ---')
+            ry = np.array([[util.encode_text('<t>')[0]]])
+            rh = np.zeros([1, INTERNALSIZE * NLAYERS])
+            for k in range(2000):
+                ryo, rh = sess.run([Yo, H], feed_dict={X: ry, pkeep: 1.0, Hin: rh, batchsize: 1})
+                rc = util.sample_from_probabilities(ryo, topn=3 if epoch <= 1 else 2)
+                print(util.decode_character(rc), end="")
+                ry = np.array([[rc]])
+            print('\n--- end of generated sample ---'.format(step))
 
-    print('.', end='', flush=True)
+        # save a checkpoint (every 500 batches)
+        if step // 10 % _50_BATCHES == 0:
+            saved_file = saver.save(sess, 'checkpoints/rnn_train_' + timestamp, global_step=step)
+            print("Saved file: " + saved_file)
 
-    # loop state around
-    istate = ostate
-    step += BATCHSIZE * SEQLEN
+        print('.', end='', flush=True)
+
+        # loop state around
+        istate = ostate
+        step += BATCHSIZE * SEQLEN
+
+def generate_sample(checkpoint, length=5000):
+    output = ''
+    with tf.Session() as sess:
+        new_saver = tf.train.import_meta_graph(checkpoint+'.meta')
+        new_saver.restore(sess, checkpoint)
+        x = util.encode_text('<t>')[0]
+        x = np.array([[x]])  # shape [BATCHSIZE, SEQLEN] with BATCHSIZE=1 and SEQLEN=1
+
+        # initial values
+        y = x
+        h = np.zeros([1, INTERNALSIZE * NLAYERS], dtype=np.float32)  # [ BATCHSIZE, INTERNALSIZE * NLAYERS]
+
+        for i in range(length):
+            yo, h = sess.run(['Yo:0', 'H:0'], feed_dict={'X:0': y, 'pkeep:0': 1., 'Hin:0': h, 'batchsize:0': 1})
+
+            c = util.sample_from_probabilities(yo, topn=2)
+            y = np.array([[c]])  # shape [BATCHSIZE, SEQLEN] with BATCHSIZE=1 and SEQLEN=1
+            c = util.decode_character(c)
+            output += c
+            # print(c, end='')
+
+    return output
+
+if __name__ == '__main__':
+    # codetext, valitext = load_data()
+    # train(codetext, valitext)
+    print(generate_sample('checkpoints/rnn_train_1518551334-36000000'))
