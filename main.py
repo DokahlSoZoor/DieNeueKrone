@@ -14,6 +14,7 @@
 
 # [START app]
 import logging
+import traceback
 
 from flask import Flask
 
@@ -38,8 +39,9 @@ def server_error(e):
     logging.exception('An error occurred during a request.')
     return """
     An internal error occurred: <pre>{}</pre>
-    See logs for full stacktrace.
-    """.format(e), 500
+    trace:
+    {}
+    """.format(e, traceback.format_exc()), 500
 
 
 if __name__ == '__main__':
