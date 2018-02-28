@@ -24,7 +24,7 @@ This will endlessly generate new articles and print them to the standard output
 Seeing the raw output of the model can be useful for debugging or to simply get a better understanding of what exactly the model does. To see the raw output you can run the following command: ```python model.py``` (without any arguments)  
 
 
-What it is
+How it works
 ------------
 The model used internally is a multi-layer RNN that receives a single character at a time as input (one-hot encoded) and outputs probabilities for the next character (between 0.0 and 1.0). This approach does have certain limitations, but also has the advantage that it is very flexible and relatively easy to train.
 
