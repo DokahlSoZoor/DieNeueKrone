@@ -31,7 +31,7 @@ def hello():
 
 @app.route('/sample')
 def sample():
-    """Return a friendly HTTP greeting."""
+    """Generate and return an article"""
     title, body = next(model.generate_articles('checkpoints/rnn_train_1519647475-248000000', amount=1))
     return """<h1>{}</h1><p>{}</p>""".format(title, body.replace('\n', '<br>'))
 

@@ -33,7 +33,7 @@ def load_data(dir=data_dir):
     return codetext, valitext
 
 #
-# the model (see FAQ in README.md)
+# the model
 #
 lr = tf.placeholder(tf.float32, name='lr')  # learning rate
 pkeep = tf.placeholder(tf.float32, name='pkeep')  # dropout parameter
@@ -48,11 +48,10 @@ Yo_ = tf.one_hot(Y_, ALPHASIZE, 1.0, 0.0)               # [ BATCHSIZE, SEQLEN, A
 # input state
 Hin = tf.placeholder(tf.float32, [None, INTERNALSIZE*NLAYERS], name='Hin')  # [ BATCHSIZE, INTERNALSIZE * NLAYERS]
 
-# using a NLAYERS=3 layers of GRU cells, unrolled SEQLEN=30 times
+# using a NLAYERS=3 layers of GRU cells, unrolled SEQLEN times
 # dynamic_rnn infers SEQLEN from the size of the inputs Xo
-
-# How to properly apply dropout in RNNs: see README.md
 cells = [rnn.GRUCell(INTERNALSIZE) for _ in range(NLAYERS)]
+
 # "naive dropout" implementation
 dropcells = [rnn.DropoutWrapper(cell,input_keep_prob=pkeep) for cell in cells]
 multicell = rnn.MultiRNNCell(dropcells, state_is_tuple=False)
@@ -173,11 +172,13 @@ def train(codetext, valitext):
         istate = ostate
         step += BATCHSIZE * SEQLEN
 
-def generate_sample(checkpoint, length=5000):
+def generate_sample(checkpoint, length=-1):
     output = ''
     with tf.Session() as sess:
+        # load the checkpoint
         new_saver = tf.train.import_meta_graph(checkpoint+'.meta')
         new_saver.restore(sess, checkpoint)
+        # the initial input to feed the network
         x = util.encode_text('<t>')[0]
         x = np.array([[x]])  # shape [BATCHSIZE, SEQLEN] with BATCHSIZE=1 and SEQLEN=1
 
@@ -187,26 +188,29 @@ def generate_sample(checkpoint, length=5000):
 
         i = 0
         while (i < length) or (length == -1):
+            # generate probabilities for the next character and the state of the network
             yo, h = sess.run(['Yo:0', 'H:0'], feed_dict={'X:0': y, 'pkeep:0': 1., 'Hin:0': h, 'batchsize:0': 1})
 
+            # pick a character and decode it
             c = util.sample_from_probabilities(yo, topn=2)
             y = np.array([[c]])  # shape [BATCHSIZE, SEQLEN] with BATCHSIZE=1 and SEQLEN=1
             c = util.decode_character(c)
+            # and return it
             i += 1
             gen_input = yield c
+            # stop generating things if we recieve a signal to do so
             if gen_input is not None:
                 raise StopIteration
 
 def generate_articles(checkpoint, amount=-1):
+    # initialise the iterator that generates the characters
     sample = generate_sample(checkpoint, length=-1)
-    i = 0
     # skip over all the initial stuff so we start with a decent state
-    def skip_to_title():
-        while not next(sample) == '<t>':
-            continue
-    skip_to_title()
+    while not next(sample) == '<t>':
+        continue
     # print('skipped initial stuff')
-    # read title and body
+    # start generating articles
+    i = 0
     while (i < amount) or (amount == -1):
         title = ''
         body = ''
@@ -218,7 +222,8 @@ def generate_articles(checkpoint, amount=-1):
         # print(len(title), title)
         # skip if title was too long/invalid
         if len(title) >= 80:
-            skip_to_title()
+            while not next(sample) == '<t>':
+                continue
             continue
         # get body
         c = next(sample)
@@ -237,12 +242,17 @@ def generate_articles(checkpoint, amount=-1):
     sample.send('stop')
 
 if __name__ == '__main__':
+    # to train the network,
+    # run: python model.py train
     if 'train' in sys.argv:
         codetext, valitext = load_data()
         train(codetext, valitext)
+    # to generate articles,
+    # run: python model.py train
     if 'article' in sys.argv:
         for title, body in generate_articles('checkpoints/rnn_train_1519647475-248000000', amount=-1):
             print(title, '\n\n', body, '\n\n')
+    # and if run without arguments it just dumps the unprocessed output of the network
     else:
         for c in generate_sample('checkpoints/rnn_train_1519647475-248000000', length=20000):
             print(c, end='')
