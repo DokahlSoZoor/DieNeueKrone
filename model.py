@@ -249,7 +249,7 @@ if __name__ == '__main__':
         train(codetext, valitext)
     # to generate articles,
     # run: python model.py train
-    if 'article' in sys.argv:
+    if 'articles' in sys.argv:
         for title, body in generate_articles('checkpoints/rnn_train_1519647475-248000000', amount=-1):
             print(title, '\n\n', body, '\n\n')
     # and if run without arguments it just dumps the unprocessed output of the network
