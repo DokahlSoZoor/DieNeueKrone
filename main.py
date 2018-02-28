@@ -32,7 +32,8 @@ def hello():
 @app.route('/sample')
 def sample():
     """Return a friendly HTTP greeting."""
-    return model.generate_sample('checkpoints/rnn_train_1518551334-40000000')
+    title, body = next(model.generate_articles('checkpoints/rnn_train_1519647475-248000000', amount=1))
+    return """<h1>{}</h1><p>{}</p>""".format(title, body.replace('\n', '<br>'))
 
 @app.errorhandler(500)
 def server_error(e):

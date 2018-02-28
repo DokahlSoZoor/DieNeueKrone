@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import math
 
@@ -113,7 +114,7 @@ def train(codetext, valitext):
 
     # training loop
     print('=== TRAINING ===')
-    for x, y_, epoch in util.rnn_minibatch_sequencer(codetext, BATCHSIZE, SEQLEN, nb_epochs=10):
+    for x, y_, epoch in util.rnn_minibatch_sequencer(codetext, BATCHSIZE, SEQLEN, nb_epochs=50):
 
         # train on one minibatch
         feed_dict = {X: x, Y_: y_, Hin: istate, lr: learning_rate, pkeep: dropout_pkeep, batchsize: BATCHSIZE}
@@ -184,18 +185,64 @@ def generate_sample(checkpoint, length=5000):
         y = x
         h = np.zeros([1, INTERNALSIZE * NLAYERS], dtype=np.float32)  # [ BATCHSIZE, INTERNALSIZE * NLAYERS]
 
-        for i in range(length):
+        i = 0
+        while (i < length) or (length == -1):
             yo, h = sess.run(['Yo:0', 'H:0'], feed_dict={'X:0': y, 'pkeep:0': 1., 'Hin:0': h, 'batchsize:0': 1})
 
             c = util.sample_from_probabilities(yo, topn=2)
             y = np.array([[c]])  # shape [BATCHSIZE, SEQLEN] with BATCHSIZE=1 and SEQLEN=1
             c = util.decode_character(c)
-            output += c
-            # print(c, end='')
+            i += 1
+            gen_input = yield c
+            if gen_input is not None:
+                raise StopIteration
 
-    return output
+def generate_articles(checkpoint, amount=-1):
+    sample = generate_sample(checkpoint, length=-1)
+    i = 0
+    # skip over all the initial stuff so we start with a decent state
+    def skip_to_title():
+        while not next(sample) == '<t>':
+            continue
+    skip_to_title()
+    # print('skipped initial stuff')
+    # read title and body
+    while (i < amount) or (amount == -1):
+        title = ''
+        body = ''
+        # get title
+        c = next(sample)
+        while (not c == '</t>') and len(title) < 80:
+            title += c
+            c = next(sample)
+        # print(len(title), title)
+        # skip if title was too long/invalid
+        if len(title) >= 80:
+            skip_to_title()
+            continue
+        # get body
+        c = next(sample)
+        while (not c == '<t>'):
+            body += c
+            c = next(sample)
+        # print(len(body))
+        # reject article if the body contains invalid characters
+        if '</t>' in body:
+            # print('article rejected')
+            continue
+        # yield article as a title, body pair
+        i += 1
+        yield title.strip('\n'), body.strip('\n')
+    # stop sample iterator
+    sample.send('stop')
 
 if __name__ == '__main__':
-    # codetext, valitext = load_data()
-    # train(codetext, valitext)
-    print(generate_sample('checkpoints/rnn_train_1518551334-40000000'))
+    if 'train' in sys.argv:
+        codetext, valitext = load_data()
+        train(codetext, valitext)
+    if 'article' in sys.argv:
+        for title, body in generate_articles('checkpoints/rnn_train_1519647475-248000000', amount=-1):
+            print(title, '\n\n', body, '\n\n')
+    else:
+        for c in generate_sample('checkpoints/rnn_train_1519647475-248000000', length=20000):
+            print(c, end='')

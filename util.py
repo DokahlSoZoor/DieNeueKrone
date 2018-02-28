@@ -52,6 +52,7 @@ def decode_character(c):
     if 32 <= c + 30 <= 126:
         return chr(c + 30)
     if 98 <= c < 98+len(tags):
+        # print('\n\n tag: {} \n\n'.format(tags[c-98]))
         return tags[c-98]
     else:
         return chr(0)  # unknown
